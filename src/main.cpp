@@ -401,23 +401,6 @@ void handleUart1Debug()
         Serial1.flush();
     }
 }
-// Handle print can frame debug
-void printCanFrame(const char* name, const CANFDMessage &msg)
-{
-    Serial1.print(name);
-    Serial1.print(" ID:0x");
-    Serial1.print(msg.id, HEX);
-    Serial1.print(" DLC:");
-    Serial1.print(msg.len);
-    Serial1.print(" DATA: ");
-
-    for (uint8_t i = 0; i < msg.len; i++) {
-        if (msg.data[i] < 0x10) Serial1.print("0");
-        Serial1.print(msg.data[i], HEX);
-        Serial1.print(" ");
-    }
-    Serial1.println();
-}
 
 // Handle speed from Serial USB
 void handleSpeed()
@@ -466,10 +449,8 @@ void handleSpeed()
                     ((raw & 0x1F) << 3);  // raw[4:0] → byte3[7:3]
 
                 // Debug output
-                Serial1.print("SPEED_KMH||");
-                Serial1.print(speedKmh);
-                Serial1.print(" RAW||");
-                Serial1.println(raw);
+                Serial1.print("SPEED||");
+                Serial1.println(speedKmh);
             }
             idx = 0;
         }
@@ -477,8 +458,6 @@ void handleSpeed()
             buffer[idx++] = c;
         }
     }
-
-    printCanFrame("IDB_STATUS", txTasks[TX_IDB_STATUS].canMess);
 }
 
 
