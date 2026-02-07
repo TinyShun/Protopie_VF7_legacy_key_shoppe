@@ -7,6 +7,24 @@
 #include <string.h>
 #include <lin_frame.h>
 #include <can_defs.h>
+// #include <BLEDevice.h>
+// #include <BLEScan.h>
+// #include <BLEAdvertisedDevice.h>
+
+// // BLE UUID
+// #define SERVICE_UUID      "12345678-1234-1234-1234-1234567890ab"
+// #define CHAR_UUID_CMD     "abcd1234-5678-90ab-cdef-1234567890ab"
+// #define BLE_SCAN_INTERVAL_MS 10000
+// // // BLE GLOBAL 
+// static BLEAdvertisedDevice *targetDevice;
+// static BLEClient *bleClient = nullptr;
+// static bool doConnect = false;
+// static bool connected = false;
+// BLERemoteCharacteristic *remoteChar;
+// unsigned long gLastBleScanMs = 0;
+// bool gBleScanning = false;
+// unsigned long gLastBleCheckMs = 0;
+// #define BLE_CHECK_INTERVAL_MS 1000  // Check connection every 1 second
 
 // Map pin for MCP2515
 static const byte MCP2517_SCK  = 18;
@@ -14,6 +32,7 @@ static const byte MCP2517_MOSI = 23;
 static const byte MCP2517_MISO = 19;
 static const byte MCP2517_CS  = 5;
 static const byte MCP2517_INT = 21;
+// CANFDMessage g_canMess;
 
 // ACAN2517FD Driver object
 ACAN2517FD acan (MCP2517_CS, SPI, MCP2517_INT) ;
@@ -220,55 +239,51 @@ void handleCanRx()
         switch (g_rxCanMsg.id) {
 
             case 0x108: {  // Gear selector
-
-                    if (brakePressed() && !gDoorOpened) {
-
-                        static uint8_t prevGearMapped = 0xFF;  // lưu gear đã gửi trước đó
-
-                        uint8_t gearRaw = g_rxCanMsg.data[2];
-                        uint8_t gearMapped = 0xFF;
+                if (brakePressed() && !gDoorOpened) {
+                    static uint8_t prevGearMapped = 0xFF;
+                    uint8_t gearRaw = g_rxCanMsg.data[2];
+                    uint8_t gearMapped = 0xFF;
 
                     switch (gearRaw) {
                         case 0x00:
-                                Serial.println("GEAR||P");
-                                gearMapped = 00;
-                                break;
+                            Serial.println("GEAR||P");
+                            gearMapped = 0x00;
+                            break;
 
                         case 0x20:
-                                Serial.println("GEAR||R");
-                                gearMapped = 01;
-                                break;
+                            Serial.println("GEAR||R");
+                            gearMapped = 0x01;
+                            break;
 
                         case 0x40:
-                                Serial.println("GEAR||N");
-                                gearMapped = 02;
-                                break;
+                            Serial.println("GEAR||N");
+                            gearMapped = 0x02;
+                            break;
 
                         case 0x60:
-                                Serial.println("GEAR||D");
-                                gearMapped = 03;
-                                break;
+                            Serial.println("GEAR||D");
+                            gearMapped = 0x03;
+                            break;
 
                         default:
-                                break;
-                        }
-                        if (gearMapped != 0xFF && gearMapped != prevGearMapped) {
-                            txTasks[TX_VCU_HV_DRVSYS_STATUS].canMess.data[4] = gearMapped;
-                            prevGearMapped = gearMapped;
-                            gGearMapped = gearMapped;
-                        }
+                            break;
                     }
-                    break;
+
+                    if (gearMapped != 0xFF && gearMapped != prevGearMapped) {
+                        txTasks[TX_VCU_HV_DRVSYS_STATUS].canMess.data[4] = gearMapped;
+                        prevGearMapped = gearMapped;
+                        gGearMapped = gearMapped;
+                    }
                 }
+                break;
+            }
 
 
             case 0x17E: {  // Steering angle sensor
                 if (g_rxCanMsg.len < 7) break;
-                    uint16_t rawAngle =
-                    ((uint16_t)g_rxCanMsg.data[5] << 8) |
-                    g_rxCanMsg.data[6];
-                    uint8_t wheelTurn =
-                    100 - ((uint32_t)rawAngle * 100 / 65535);
+
+                uint16_t rawAngle = ((uint16_t)g_rxCanMsg.data[5] << 8) | g_rxCanMsg.data[6];
+                uint8_t wheelTurn = 100 - ((uint32_t)rawAngle * 100 / 65535);
 
                 if (wheelTurn != prevWheelTurn) {
                     Serial.print("WHEEL_TURN||");
@@ -277,6 +292,7 @@ void handleCanRx()
                 }
                 break;
             }
+
             default:
                 break;
         }
@@ -289,6 +305,10 @@ void candebug()
     unsigned long now = millis();
     if (now - gLastCanPrintMs >= CAN_PRINT_INTERVAL_MS) {
         gLastCanPrintMs = now;
+        // Serial.print("CAN RX Count: ");
+        // Serial.print(gCanRxCount);
+        // Serial.print(" | CAN TX Count: ");
+        // Serial.println(gCanTxCount);
     }
 }
 
@@ -370,17 +390,16 @@ void handleTurnStateMachine(const uLIN_MSG& msg) {
     gLastState = gCurrentState;
   }
 }
-//Handle uart send to protopie
+// Handle UART1 debug output
 void handleUart1Debug()
 {
     static uint8_t prevGear = 0xFF;
     if (gGearMapped != prevGear) {
         prevGear = gGearMapped;
         Serial1.print("GEAR||");
-        Serial1.println(gGearMapped); // Placeholder for brake percent
+        Serial1.println(gGearMapped);
         Serial1.flush();
     }
-
 }
 
 // Handle speed from Serial USB
@@ -418,7 +437,7 @@ void handleSpeed()
     }
 }
 
-// Handle keyfob
+// Handle key fob actions
 void handleKeyAction()
 {
     static bool prevLock = HIGH;
@@ -459,7 +478,8 @@ void handleKeyAction()
         setIgnStateToCan(IGN_ON);
         Serial1.println("IGN||ON");
         Serial1.print("pedals_brake||");
-        Serial1.println("50");}
+        Serial1.println("50");
+    }
 }
 
 void setup()
@@ -538,19 +558,19 @@ void loop(){
     candebug();
     // UART1 DEBUG
     handleUart1Debug();
-    //LIN 
-      unsigned long now = millis();
-  if (now - gLastReq >= 100) {
-    gLastReq = now;
-    sendRequest(LIN_TARGET_ID);
-  }
-
-  // 2️⃣ Nhận LIN liên tục (non-blocking)
-  if (tryReceiveLin(gLinMsg)) {
-    if (gLinMsg.frame.id == LIN_TARGET_ID) {
-      handleTurnStateMachine(gLinMsg);
+    // LIN communication
+    unsigned long now = millis();
+    if (now - gLastReq >= 100) {
+        gLastReq = now;
+        sendRequest(LIN_TARGET_ID);
     }
-  }
+
+    // Receive LIN continuously (non-blocking)
+    if (tryReceiveLin(gLinMsg)) {
+        if (gLinMsg.frame.id == LIN_TARGET_ID) {
+            handleTurnStateMachine(gLinMsg);
+        }
+    }
 
 
         // uint8_t count = 0;
