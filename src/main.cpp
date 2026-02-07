@@ -401,6 +401,23 @@ void handleUart1Debug()
         Serial1.flush();
     }
 }
+// Handle print can frame debug
+void printCanFrame(const char* name, const CANFDMessage &msg)
+{
+    Serial1.print(name);
+    Serial1.print(" ID:0x");
+    Serial1.print(msg.id, HEX);
+    Serial1.print(" DLC:");
+    Serial1.print(msg.len);
+    Serial1.print(" DATA: ");
+
+    for (uint8_t i = 0; i < msg.len; i++) {
+        if (msg.data[i] < 0x10) Serial1.print("0");
+        Serial1.print(msg.data[i], HEX);
+        Serial1.print(" ");
+    }
+    Serial1.println();
+}
 
 // Handle speed from Serial USB
 void handleSpeed()
@@ -408,6 +425,7 @@ void handleSpeed()
     static char buffer[16];
     static uint8_t idx = 0;
 
+    // Đọc từ Serial (USB), nếu muốn đọc từ UART1 thì đổi thành Serial1
     while (Serial.available()) {
         char c = Serial.read();
 
@@ -415,19 +433,43 @@ void handleSpeed()
             if (idx > 0) {
                 buffer[idx] = '\0';
 
-                uint16_t speedValue = atoi(buffer); 
-                Serial1.print("SPEED||");
-                Serial1.println(speedValue);
-                gSpeed = (uint8_t)(speedValue & 0xFF);
+                // Speed từ Serial (km/h dạng số nguyên)
+                int speedKmh = atoi(buffer);
 
-                // Set speed to IDB_Status (0x20D) - bits 27-40 (14 bits)
-                // Bit 27-40: byte 3 (bits 3-7), byte 4 (bits 0-7), byte 5 (bits 0-4)
-                // speedValue is 14-bit value (0-16383)
-                uint16_t speed14bit = speedValue & 0x3FFF;  // Mask to 14 bits
-                // Distribute 14 bits across bytes 3, 4, 5
-                txTasks[TX_IDB_STATUS].canMess.data[3] = (txTasks[TX_IDB_STATUS].canMess.data[3] & 0x07) | ((speed14bit & 0x1F) << 3);
-                txTasks[TX_IDB_STATUS].canMess.data[4] = (speed14bit >> 5) & 0xFF;
-                txTasks[TX_IDB_STATUS].canMess.data[5] = (txTasks[TX_IDB_STATUS].canMess.data[5] & 0xE0) | ((speed14bit >> 13) & 0x1F);
+                // Convert physical → raw theo DBC
+                // DBC: Factor=0.056, Offset=0
+                // Physical = Raw * 0.056 + 0
+                // => Raw = Physical / 0.056
+                float rawFloat = (float)speedKmh / 0.056f;
+
+                if (rawFloat < 0) rawFloat = 0;
+                if (rawFloat > 8191) rawFloat = 8191; // 13-bit max (0x1FFF)
+
+                // VehicleSpd encoding for IDB_STATUS (0x20D)
+                // Example: Speed 20 km/h → raw 355 → CAN: 0x00000B1800000000
+                // DBC: Bit 27-40 (13 bits actually), Motorola, Factor=0.056
+                // Decode formula: raw = (byte2 << 5) | (byte3 >> 3)
+                // Encode formula: byte2 = raw >> 5, byte3[7:3] = raw[4:0]
+                
+                uint16_t raw = (uint16_t)(rawFloat + 0.5f); // Round
+                
+                // Motorola encoding into byte 2-3:
+                // Byte2[7:0] = raw[12:5] (upper 8 bits)
+                // Byte3[7:3] = raw[4:0] (lower 5 bits)
+                
+                // Byte 2: raw >> 5
+                txTasks[TX_IDB_STATUS].canMess.data[2] = raw >> 5;
+                
+                // Byte 3: keep bits 0-2, set bits 7-3 from raw[4:0]
+                txTasks[TX_IDB_STATUS].canMess.data[3] = 
+                    (txTasks[TX_IDB_STATUS].canMess.data[3] & 0x07) |  // Keep bits 0-2
+                    ((raw & 0x1F) << 3);  // raw[4:0] → byte3[7:3]
+
+                // Debug output
+                Serial1.print("SPEED_KMH||");
+                Serial1.print(speedKmh);
+                Serial1.print(" RAW||");
+                Serial1.println(raw);
             }
             idx = 0;
         }
@@ -435,7 +477,12 @@ void handleSpeed()
             buffer[idx++] = c;
         }
     }
+
+    printCanFrame("IDB_STATUS", txTasks[TX_IDB_STATUS].canMess);
 }
+
+
+
 
 // Handle key fob actions
 void handleKeyAction()
@@ -466,6 +513,8 @@ void handleKeyAction()
 
             Serial1.println("GEAR||P");
             Serial1.println("IGN||OFF");
+            Serial.println("GEAR||P");
+            Serial.println("IGN||OFF");
         }
     }
 
